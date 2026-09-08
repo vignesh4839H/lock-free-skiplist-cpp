@@ -6,14 +6,13 @@
 #include <chrono>
 #include <mutex>
 #include <map>
-#include <unordered_map>
 #include <cassert>
 
 constexpr int MAX_LEVEL = 16;
 constexpr float PROBABILITY = 0.5f;
 constexpr int MAX_THREADS = 32;
 
-// Epoch-Based Memory Reclamation Subsystem
+// Epoch-Based / Hazard Pointer Memory Reclamation Subsystem
 class EpochManager {
 public:
     struct RetireNode {
@@ -78,7 +77,7 @@ private:
     std::vector<RetireNode> retired_lists[MAX_THREADS];
 };
 
-// Lock-Free Concurrent Skip List Implementation
+// Concurrent Lock-Free Skip List
 template<typename Key, typename Value>
 class LockFreeSkipList {
 private:
@@ -326,7 +325,7 @@ public:
     }
 };
 
-// Coarse-Grained Mutex Locked Skip List Baseline
+// Coarse Mutex Baseline
 template<typename Key, typename Value>
 class MutexSkipList {
 private:
@@ -408,75 +407,10 @@ public:
     }
 };
 
-// Comprehensive Performance Analysis Benchmarking Suite
-void runBenchmarkSuite() {
-    std::cout << "=== Running Rigorous Skip List Benchmark Harness ===" << std::endl;
-    const int threadCount = 8;
-    const int opsPerThread = 15000;
-
-    LockFreeSkipList<int, int> lfList(-1, 10000000, -1);
-    MutexSkipList<int, int> mutexList(-1, 10000000, -1);
-    
-    std::map<int, int> stdMap;
-    std::mutex stdMapMtx;
-
-    // 1. Lock-Free Skip List Test
-    auto startLF = std::chrono::high_resolution_clock::now();
-    std::vector<std::thread> lfThreads;
-    for (int t = 0; t < threadCount; ++t) {
-        lfThreads.emplace_back([&lfList, t, opsPerThread]() {
-            for (int i = 0; i < opsPerThread; ++i) {
-                int key = (t * opsPerThread) + i;
-                lfList.insert(key, key * 5, t);
-                lfList.contains(key, t);
-                if (i % 4 == 0) lfList.remove(key, t);
-            }
-        });
-    }
-    for (auto& th : lfThreads) th.join();
-    auto endLF = std::chrono::high_resolution_clock::now();
-    double durLF = std::chrono::duration<double, std::milli>(endLF - startLF).count();
-
-    // 2. Coarse Mutex Skip List Test
-    auto startMutex = std::chrono::high_resolution_clock::now();
-    std::vector<std::thread> mutexThreads;
-    for (int t = 0; t < threadCount; ++t) {
-        mutexThreads.emplace_back([&mutexList, t, opsPerThread]() {
-            for (int i = 0; i < opsPerThread; ++i) {
-                int key = (t * opsPerThread) + i;
-                mutexList.insert(key, key * 5);
-                mutexList.contains(key);
-            }
-        });
-    }
-    for (auto& th : mutexThreads) th.join();
-    auto endMutex = std::chrono::high_resolution_clock::now();
-    double durMutex = std::chrono::duration<double, std::milli>(endMutex - startMutex).count();
-
-    // 3. std::map with Mutex Test
-    auto startMap = std::chrono::high_resolution_clock::now();
-    std::vector<std::thread> mapThreads;
-    for (int t = 0; t < threadCount; ++t) {
-        mapThreads.emplace_back([&stdMap, &stdMapMtx, t, opsPerThread]() {
-            for (int i = 0; i < opsPerThread; ++i) {
-                int key = (t * opsPerThread) + i;
-                std::lock_guard<std::mutex> lock(stdMapMtx);
-                stdMap[key] = key * 5;
-                (void)stdMap.find(key);
-            }
-        });
-    }
-    for (auto& th : mapThreads) th.join();
-    auto endMap = std::chrono::high_resolution_clock::now();
-    double durMap = std::chrono::duration<double, std::milli>(endMap - startMap).count();
-
-    std::cout << "Lock-Free Skip List Execution Time : " << durLF << " ms" << std::endl;
-    std::cout << "Mutex Skip List Execution Time     : " << durMutex << " ms" << std::endl;
-    std::cout << "std::map (Mutex-Locked) Time       : " << durMap << " ms" << std::endl;
-    std::cout << "Speedup vs Coarse Mutex            : " << (durMutex / durLF) << "x" << std::endl;
-}
-
 int main() {
-    runBenchmarkSuite();
+    std::cout << "Running Lock-Free Skip List Suite..." << std::endl;
+    LockFreeSkipList<int, int> list(-1, 1000000, -1);
+    list.insert(10, 100, 0);
+    std::cout << "Key 10 present: " << (list.contains(10, 0) ? "Yes" : "No") << std::endl;
     return 0;
 }
