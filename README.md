@@ -1,9 +1,8 @@
-# Concurrent Lock-Free Memory Pool Allocator (C++20)
+# Concurrent Memory Pool and Lock-Free SPSC Ring Buffer (C++20)
 
-Custom lock-free memory pool allocator in C++20 designed for high-concurrency environments.
+High-performance, lock-free SPSC ring buffer coupled with a custom fixed-size memory pool allocator.
 
 ## Build and Run
-
 ```bash
-g++ -std=c++20 main.cpp -lpthread -o memory_pool
-./memory_pool
+g++ -std=c++20 main.cpp -lpthread -o main
+./main
