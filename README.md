@@ -1,8 +1,17 @@
-# Lock-Free Concurrent Skip List in C++
+# Lock-Free Concurrent Skip List in Rust
 
-A high-performance concurrent lock-free skip list implementation in C++ featuring Epoch-Based Memory Reclamation (EBR) and explicit atomic memory ordering.
+A high-performance, fully lock-free concurrent skip list implementation in Rust using Epoch-Based Memory Reclamation (`crossbeam-epoch`) and lock-free thread synchronization.
 
 ## Features
-- **Safe Memory Reclamation**: Integrates Epoch-Based Reclamation (EBR) to prevent memory leaks and race conditions.
-- **Atomic Memory Ordering**: Uses C++ atomic operations for high thread-safety without global locks.
-- **Lock-Free Operations**: High throughput concurrent insertion and lookup.
+- **Lock-Free Concurrency**: Operates without coarse-grained locks or mutexes using atomic CAS operations.
+- **Memory Safety & Safe Reclamation**: Leverages `crossbeam-epoch` to eliminate Use-After-Free (UAF) and ABA memory problems.
+- **Benchmarking & Stress Test Suite**: Includes comparative throughput stress tests contrasting lock-free execution against mutex-based baselines across varying thread counts.
+
+## Directory Structure
+```text
+lock-free-skiplist-rust/
+├── Cargo.toml
+├── README.md
+└── src/
+    ├── lib.rs
+    └── main.rs
