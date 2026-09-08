@@ -5,14 +5,13 @@
 #include <random>
 #include <chrono>
 #include <mutex>
-#include <map>
 #include <cassert>
 
 constexpr int MAX_LEVEL = 16;
 constexpr float PROBABILITY = 0.5f;
 constexpr int MAX_THREADS = 32;
 
-// Epoch-Based / Hazard Pointer Memory Reclamation Subsystem
+// Epoch-Based Memory Reclamation Subsystem
 class EpochManager {
 public:
     struct RetireNode {
@@ -27,16 +26,18 @@ public:
     }
 
     void enter_epoch(int thread_id) {
+        if (thread_id >= MAX_THREADS) return;
         active_epochs[thread_id].store(global_epoch.load(std::memory_order_relaxed), std::memory_order_seq_cst);
     }
 
     void exit_epoch(int thread_id) {
+        if (thread_id >= MAX_THREADS) return;
         active_epochs[thread_id].store(UINT64_MAX, std::memory_order_release);
     }
 
     template<typename T>
     void retire(T* ptr, int thread_id) {
-        if (!ptr) return;
+        if (!ptr || thread_id >= MAX_THREADS) return;
         uint64_t cur_epoch = global_epoch.load(std::memory_order_relaxed);
         retired_lists[thread_id].push_back({ptr, [](void* p) { delete static_cast<T*>(p); }, cur_epoch});
         
@@ -46,6 +47,7 @@ public:
     }
 
     void reclaim(int thread_id) {
+        if (thread_id >= MAX_THREADS) return;
         uint64_t min_epoch = global_epoch.load(std::memory_order_relaxed);
         for (int i = 0; i < MAX_THREADS; ++i) {
             uint64_t ep = active_epochs[i].load(std::memory_order_acquire);
@@ -161,7 +163,7 @@ private:
                         marked = succMarked.marked;
                     }
 
-                    if (curr != tail && curr->key < key) {
+                    if (curr != tail && curr && curr->key < key) {
                         pred = curr;
                         curr = succ;
                     } else {
@@ -245,50 +247,6 @@ public:
         }
     }
 
-    bool remove(Key key, int thread_id = 0) {
-        EpochManager::instance().enter_epoch(thread_id);
-        Node* preds[MAX_LEVEL];
-        Node* succs[MAX_LEVEL];
-
-        while (true) {
-            bool found = findPosition(key, preds, succs, thread_id);
-            if (!found) {
-                EpochManager::instance().exit_epoch(thread_id);
-                return false;
-            }
-
-            Node* victim = succs[0];
-            for (int level = victim->height - 1; level >= 1; --level) {
-                MarkedPointer succMarked = victim->next[level].load(std::memory_order_acquire);
-                while (!succMarked.marked) {
-                    MarkedPointer desired(succMarked.ptr, true);
-                    victim->next[level].compare_exchange_weak(
-                        succMarked, desired,
-                        std::memory_order_acq_rel, std::memory_order_relaxed);
-                    succMarked = victim->next[level].load(std::memory_order_acquire);
-                }
-            }
-
-            MarkedPointer succMarked = victim->next[0].load(std::memory_order_acquire);
-            while (true) {
-                bool iMarked = succMarked.marked;
-                MarkedPointer desired(succMarked.ptr, true);
-                bool success = victim->next[0].compare_exchange_weak(
-                    succMarked, desired,
-                    std::memory_order_acq_rel, std::memory_order_relaxed);
-                succMarked = victim->next[0].load(std::memory_order_acquire);
-                if (success) {
-                    findPosition(key, preds, succs, thread_id);
-                    EpochManager::instance().exit_epoch(thread_id);
-                    return true;
-                } else if (iMarked) {
-                    EpochManager::instance().exit_epoch(thread_id);
-                    return false;
-                }
-            }
-        }
-    }
-
     bool contains(Key key, int thread_id = 0) {
         EpochManager::instance().enter_epoch(thread_id);
         bool marked = false;
@@ -298,8 +256,7 @@ public:
 
         for (int level = MAX_LEVEL - 1; level >= 0; --level) {
             curr = pred->next[level].load(std::memory_order_acquire).ptr;
-            while (true) {
-                if (!curr) break;
+            while (curr) {
                 MarkedPointer succMarked = curr->next[level].load(std::memory_order_acquire);
                 succ = succMarked.ptr;
                 marked = succMarked.marked;
@@ -312,7 +269,7 @@ public:
                     marked = succMarked.marked;
                 }
 
-                if (curr != tail && curr && curr->key < key) {
+                if (curr && curr != tail && curr->key < key) {
                     pred = curr;
                     curr = succ;
                 } else {
@@ -322,88 +279,6 @@ public:
         }
         EpochManager::instance().exit_epoch(thread_id);
         return (curr != tail && curr != nullptr && curr->key == key && !marked);
-    }
-};
-
-// Coarse Mutex Baseline
-template<typename Key, typename Value>
-class MutexSkipList {
-private:
-    struct Node {
-        Key key;
-        Value value;
-        int height;
-        Node** next;
-
-        Node(Key k, Value val, int h) : key(k), value(val), height(h) {
-            next = new Node*[h]();
-        }
-
-        ~Node() { delete[] next; }
-    };
-
-    Node* head;
-    Node* tail;
-    std::mutex mtx;
-
-    int getRandomLevel() {
-        thread_local std::mt19937 rng(std::random_device{}());
-        thread_local std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-        int lvl = 1;
-        while (dist(rng) < PROBABILITY && lvl < MAX_LEVEL) lvl++;
-        return lvl;
-    }
-
-public:
-    MutexSkipList(Key minKey, Key maxKey, Value defaultVal) {
-        head = new Node(minKey, defaultVal, MAX_LEVEL);
-        tail = new Node(maxKey, defaultVal, MAX_LEVEL);
-        for (int i = 0; i < MAX_LEVEL; ++i) head->next[i] = tail;
-    }
-
-    ~MutexSkipList() {
-        Node* curr = head;
-        while (curr) {
-            Node* nxt = curr->next[0];
-            delete curr;
-            curr = nxt;
-        }
-    }
-
-    bool insert(Key key, Value val) {
-        std::lock_guard<std::mutex> lock(mtx);
-        Node* update[MAX_LEVEL];
-        Node* curr = head;
-
-        for (int i = MAX_LEVEL - 1; i >= 0; --i) {
-            while (curr->next[i] && curr->next[i]->key < key) {
-                curr = curr->next[i];
-            }
-            update[i] = curr;
-        }
-
-        curr = curr->next[0];
-        if (curr && curr->key == key) return false;
-
-        int lvl = getRandomLevel();
-        Node* newNode = new Node(key, val, lvl);
-        for (int i = 0; i < lvl; ++i) {
-            newNode->next[i] = update[i]->next[i];
-            update[i]->next[i] = newNode;
-        }
-        return true;
-    }
-
-    bool contains(Key key) {
-        std::lock_guard<std::mutex> lock(mtx);
-        Node* curr = head;
-        for (int i = MAX_LEVEL - 1; i >= 0; --i) {
-            while (curr->next[i] && curr->next[i]->key < key) {
-                curr = curr->next[i];
-            }
-        }
-        curr = curr->next[0];
-        return (curr && curr->key == key);
     }
 };
 
