@@ -1,8 +1,0 @@
-[package]
-name = "lock-free-skiplist-rust"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-crossbeam-epoch = "0.9"
-rand = "0.8"
